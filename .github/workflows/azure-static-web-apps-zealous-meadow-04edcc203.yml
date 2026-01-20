@@ -1,121 +1,134 @@
 
+name: SWA CI/CD
+
 permissions:
   contents: write
   pull-requests: write
-  actions: write
-
-name: Azure Static Web Apps CI/CD (with Playwright E2E)
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
     types: [opened, synchronize, reopened, closed]
-    branches:
-      - main
+    branches: [main]
+  push:
+    branches: [main]
+
+env:
+  Oryx_Factory_Override_NodeVersion: "20"
 
 jobs:
-  # ----------------------------
-  # 1) Build + Deploy (Preview or Production)
-  # ----------------------------
-  build_and_deploy_job:
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action != 'closed')
-    runs-on: ubuntu-latest
-    name: Build and Deploy Job
 
-    outputs:
-      preview_url: ${{ steps.output_preview_url.outputs.preview_url }}
-
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          submodules: true
-          lfs: false
-
-      - name: Build And Deploy
-        id: builddeploy
-        uses: Azure/static-web-apps-deploy@v1
-        env:
-          Oryx_Factory_Override_NodeVersion: "20"
-        with:
-          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_ZEALOUS_MEADOW_04EDCC203 }}
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          action: "upload"
-          ###### Repository/Build Configurations ######
-          app_location: "/"
-          api_location: "api"
-          output_location: "out"
-          ###### End ######
-
-      - name: Output Preview URL
-        if: github.event_name == 'pull_request'
-        id: output_preview_url
-        run: echo "preview_url=${{ steps.builddeploy.outputs.static_web_app_url }}" >> $GITHUB_OUTPUT
-
-  # ----------------------------
-  # 2) Run Playwright E2E tests on the Preview
-  # ----------------------------
-  e2e_tests_job:
-    needs: build_and_deploy_job
+  # -----------------------------------------
+  # 1) Deploy Preview on PR
+  # -----------------------------------------
+  preview:
     if: github.event_name == 'pull_request' && github.event.action != 'closed'
     runs-on: ubuntu-latest
-    name: Playwright E2E Tests
+
+    outputs:
+      url: ${{ steps.out.outputs.url }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Deploy Preview
+        id: deploy
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_ZEALOUS_MEADOW_04EDCC203}}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: upload
+          app_location: "/"
+          api_location: "api"
+          output_location: "out"
+
+      - name: Output URL
+        id: out
+        run: echo "url=${{ steps.deploy.outputs.static_web_app_url }}" >> $GITHUB_OUTPUT
+
+
+  # -----------------------------------------
+  # 2) Run Playwright
+  # -----------------------------------------
+  e2e:
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    needs: preview
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Install dependencies
-        run: npm ci
+      - run: npm ci
+      - run: npx playwright install --with-deps
 
-      - name: Install Playwright Browsers
-        run: npx playwright install --with-deps
-
-      - name: Show Preview URL
-        run: echo "Preview URL from deploy job => $PREVIEW_URL"
+      - name: Run E2E
         env:
-          PREVIEW_URL: ${{ needs.build_and_deploy_job.outputs.preview_url }}
-
-      - name: Run Playwright Tests
-        env:
-          PREVIEW_URL: ${{ needs.build_and_deploy_job.outputs.preview_url }}
-          CI: "true"
+          PREVIEW_URL: ${{ needs.preview.outputs.url }}
+          CI: true
         run: npm run test:e2e
 
-      - name: Upload Playwright Report
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
           name: playwright-report
           path: playwright-report
 
-      - name: Auto-merge PR
-        if: success()
-        uses: pascalgn/automerge-action@v0.16.3
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          MERGE_LABELS: ""     # disable label requirements
-          MERGE_METHOD: squash
-          MERGE_COMMIT_MESSAGE: pull-request-title
 
-  cleanup_preview_environment:
-    needs: e2e_tests_job
-    if: >
+  # -----------------------------------------
+  # 3) Auto-merge PR when tests pass
+  #    (PAT required so follow-up events fire)
+  # -----------------------------------------
+  automerge:
+    if: |
       github.event_name == 'pull_request' &&
-      github.event.action == 'closed' &&
-      github.event.pull_request.merged == true &&
-      needs.e2e_tests_job.result == 'success'
+      github.event.action != 'closed' &&
+      needs.e2e.result == 'success'
+    needs: e2e
     runs-on: ubuntu-latest
-    name: Close Preview Environment
 
     steps:
-      - name: Close Static Web Apps Preview
+      - name: Auto-merge
+        uses: pascalgn/automerge-action@v0.16.3
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT_AUTOMERGE }}
+          MERGE_METHOD: squash
+          MERGE_LABELS: ""
+          MERGE_COMMIT_MESSAGE: pull-request-title
+
+
+  # -----------------------------------------
+  # 4) Close preview when PR closes
+  # -----------------------------------------
+  close_preview:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Close Preview
         uses: Azure/static-web-apps-deploy@v1
         with:
-          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_ZEALOUS_MEADOW_04EDCC203 }}
-          action: "close"
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_ZEALOUS_MEADOW_04EDCC203}}
+          action: close
+
+
+  # -----------------------------------------
+  # 5) Deploy Production when main receives push
+  # -----------------------------------------
+  production:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy Production
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: upload
+          app_location: "/"
+          api_location: "api"
+          output_location: "out"
