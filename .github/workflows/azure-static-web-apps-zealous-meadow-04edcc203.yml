@@ -1,4 +1,9 @@
 
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
 name: Azure Static Web Apps CI/CD (with Playwright E2E)
 
 on:
@@ -39,6 +44,7 @@ jobs:
           app_location: "/"
           api_location: "api"
           output_location: "out"
+          skip_pr_comment: true
           ###### End ######
 
       - name: Output Preview URL
@@ -92,8 +98,10 @@ jobs:
         uses: pascalgn/automerge-action@v0.16.3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          MERGE_LABELS: ""       # no required labels
+          MERGE_LABELS: ""     # disable label requirements
           MERGE_METHOD: squash
+          MERGE_COMMIT_MESSAGE: pull-request-title
+
 
 
   # ----------------------------
