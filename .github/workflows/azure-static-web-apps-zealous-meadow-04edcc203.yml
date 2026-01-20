@@ -34,10 +34,9 @@ jobs:
           ###### End of Repository/Build Configurations ######
       - name: Output Preview URL
         if: github.event_name == 'pull_request'
-        run: echo "preview_url=${{ steps.builddeploy.outputs.static_web_app_url }}" >> $GITHUB_OUTPUT
-        
-outputs:
-  preview_url: ${{ steps.output_preview_url.outputs.preview_url }}
+        run: echo "preview_url=${{ steps.builddeploy.outputs.static_web_app_url }}" >> $GITHUB_OUTPUT       
+    outputs:
+      preview_url: ${{ steps.output_preview_url.outputs.preview_url }}
 
 
 
