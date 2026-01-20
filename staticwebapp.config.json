@@ -2,5 +2,11 @@
     "navigationFallback": {
       "rewrite": "index.html",
       "exclude": ["*.{png,jpg,gif,svg}", "*.css"]
-    }
+    },
+    "routes": [
+      {
+        "route": "/api/*",
+        "allowedRoles": ["anonymous"]
+      }
+    ]
 }
